@@ -20,6 +20,8 @@ Item {
   property string mode: "triggers"
   property color glow: "transparent"
   property real glowLevel: 0
+  // Rainbow colours: the preview sweeps hues across the board instead of one colour.
+  property bool rainbow: false
 
   property string hoveredCode: ""
 
@@ -61,6 +63,9 @@ Item {
         readonly property bool changed: canvas.dirty[modelData.code] === true
         readonly property bool rapid: trigger ? Model.isRapid(trigger.mode) : false
         readonly property real unit: canvas.scale
+        readonly property color lit: canvas.rainbow && canvas.layout
+          ? Qt.hsla((modelData.x + modelData.width / 2) / canvas.layout.width, 0.75, 0.55, 1)
+          : canvas.glow
 
         x: modelData.x * unit
         y: modelData.y * unit
@@ -68,13 +73,13 @@ Item {
         height: modelData.height * unit
         radius: Math.max(3, 2 * unit)
         color: {
-          if (canvas.mode === "lighting") return Util.alpha(canvas.glow, 0.06 + 0.34 * canvas.glowLevel)
+          if (canvas.mode === "lighting") return Util.alpha(cap.lit, 0.06 + 0.34 * canvas.glowLevel)
           if (selected) return Util.alpha(Color.accent, hovered ? 0.30 : 0.22)
           return Util.alpha(Color.menu.text, hovered ? 0.12 : 0.06)
         }
         border.width: selected && canvas.interactive ? Math.max(2, Style.space(2)) : Math.max(1, Style.normalBorderWidth)
         border.color: {
-          if (canvas.mode === "lighting") return Util.alpha(canvas.glow, 0.20 + 0.55 * canvas.glowLevel)
+          if (canvas.mode === "lighting") return Util.alpha(cap.lit, 0.20 + 0.55 * canvas.glowLevel)
           if (selected) return Color.accent
           return Util.alpha(Color.menu.text, hovered ? 0.35 : 0.16)
         }

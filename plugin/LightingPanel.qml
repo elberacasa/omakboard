@@ -109,6 +109,19 @@ Item {
         font.bold: true
       }
 
+      Label {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: Style.spacing.huge
+        visible: text !== ""
+        text: panel.ready ? Model.modeNote(panel.lighting.mode) : ""
+        wrapMode: Text.Wrap
+        elide: Text.ElideNone
+        opacity: 0.55
+        font.pixelSize: Style.font.caption
+      }
+
       Grid {
         id: effects
         anchors.left: parent.left
@@ -204,9 +217,42 @@ Item {
           onReleased: function(v) { panel.edited({ speed: v }, true) }
         }
 
+        Item {
+          width: parent.width
+          height: Math.max(rainbowText.implicitHeight, rainbowSwitch.implicitHeight)
+          visible: panel.ready && Model.supportsRainbow(panel.lighting.mode)
+
+          Column {
+            id: rainbowText
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+
+            Label {
+              text: "Rainbow colours"
+              opacity: 0.8
+            }
+
+            Label {
+              text: "Cycles through every colour instead of one"
+              opacity: 0.45
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          ToggleSwitch {
+            id: rainbowSwitch
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            checked: panel.ready && panel.lighting.full_color
+            onToggled: panel.edited({ full_color: !panel.lighting.full_color }, true)
+          }
+        }
+
         Column {
           width: parent.width
           spacing: Style.spacing.md
+          // One colour does not apply while rainbow cycles them all.
+          opacity: panel.ready && panel.lighting.full_color && Model.supportsRainbow(panel.lighting.mode) ? 0.4 : 1
 
           Label {
             text: "Colour"

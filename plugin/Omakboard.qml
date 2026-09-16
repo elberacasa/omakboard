@@ -146,8 +146,15 @@ Item {
   }
 
   function failLoad(message) {
-    if (root.ready) root.say(message, true)
-    else root.loadError = message
+    if (root.ready && !Model.connectionLost(message)) {
+      root.say(message, true)
+      return
+    }
+    // The keyboard went away or cannot be reached: show what brings it back, not controls that
+    // cannot save.
+    root.state = null
+    root.selection = {}
+    root.loadError = message
   }
 
   function say(message, isError) {
@@ -287,6 +294,15 @@ Item {
       root.undoing = false
       root.failLoad(message)
     }
+  }
+
+  // While the overlay waits for the keyboard to come back, it keeps looking.
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.opened && !root.ready && !root.loading
+      && (root.setupKind === "unplugged" || root.setupKind === "permission" || root.setupKind === "busy")
+    onTriggered: root.refresh()
   }
 
   Timer {
@@ -773,6 +789,7 @@ Item {
               mode: "lighting"
               layout: root.layout
               glow: root.draftLighting ? Model.rgbToHex(root.draftLighting.foreground) : "transparent"
+              rainbow: root.draftLighting !== null && root.draftLighting.full_color && Model.supportsRainbow(root.draftLighting.mode)
               glowLevel: root.draftLighting && root.limits && root.limits.brightness_max > 0
                 ? root.draftLighting.brightness / root.limits.brightness_max : 0
             }

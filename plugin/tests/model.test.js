@@ -117,6 +117,21 @@ test("setup states and their one action", () => {
   assert.equal(Model.setupCopy("error", "boom").body, "boom")
 })
 
+test("lost connections are told apart from ordinary errors", () => {
+  assert.equal(Model.connectionLost("no supported keyboard is plugged in"), true)
+  assert.equal(Model.connectionLost("permission denied opening /dev/hidraw4"), true)
+  assert.equal(Model.connectionLost("lighting (direction 0 -> 4) did not read back as written"), false)
+  assert.equal(Model.connectionLost("travel 400 is outside 8-340"), false)
+})
+
+test("effects: rainbow and notes", () => {
+  assert.equal(Model.supportsRainbow(0), false)
+  assert.equal(Model.supportsRainbow(7), true)
+  assert.match(Model.modeNote(10), /saved on the keyboard/)
+  assert.equal(Model.modeNote(2), "")
+  assert.notEqual(Model.modeGlyph(10), Model.modeGlyph(99))
+})
+
 // ---- Units
 
 test("millimetres", () => {

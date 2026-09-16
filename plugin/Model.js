@@ -117,6 +117,12 @@ function errorMessage(stderr, exitCode) {
   return "omakboard serve stopped (exit " + exitCode + ")."
 }
 
+// A failure that means the keyboard can no longer be reached, so its controls cannot save.
+function connectionLost(message) {
+  var kind = setupKind(message)
+  return kind === "install" || kind === "permission" || kind === "unplugged" || kind === "other-model"
+}
+
 // What stands between the overlay and the keyboard.
 function setupKind(message) {
   var m = String(message || "")
@@ -315,8 +321,20 @@ function hexToRgb(text) {
 var SWATCHES = ["#ff0000", "#ff7a00", "#ffd000", "#00e060", "#00d8c0", "#00a0ff", "#3050ff", "#9040ff", "#ff40c0", "#ffffff"]
 
 // Nerd Font glyphs for lighting modes, by id.
+// Custom lights keys in their own saved colours; every other effect but Static can cycle colours.
+var CUSTOM_MODE = 10
+
+function supportsRainbow(mode) {
+  return mode !== 0
+}
+
+function modeNote(mode) {
+  if (mode === CUSTOM_MODE) return "Custom lights each key in the colours saved on the keyboard. Set them in AULA's driver."
+  return ""
+}
+
 function modeGlyph(id) {
-  var glyphs = { 0: "", 1: "", 2: "", 3: "", 4: "", 6: "", 7: "", 8: "", 9: "", 11: "", 12: "", 14: "", 15: "", 16: "" }
+  var glyphs = { 10: "\uf00a", 0: "", 1: "", 2: "", 3: "", 4: "", 6: "", 7: "", 8: "", 9: "", 11: "", 12: "", 14: "", 15: "", 16: "" }
   return glyphs[id] || ""
 }
 
