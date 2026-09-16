@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1 (2026-09-16)
+
+### Fixed
+
+- Lighting changes to Aurora, Speed Respond, Radar and Striation failed with "lighting did not read
+  back as written". These effects keep a direction of their own whatever is sent; Omakboard now writes
+  and expects the form the keyboard stores, measured for every mode, and keeps raw directions instead
+  of folding 6 and 7 into 0.
+
+### Added
+
+- Rainbow colours for every effect but Static, in the overlay and as `omakboard lighting --rainbow on`.
+- Custom, the per-key colours saved on the keyboard, among the effects.
+- A failed read-back names what differs, such as `lighting (direction 0 -> 4)` or
+  `the trigger of W (travel 120 -> 121)`, and is only reported after reading back a few times.
+- The overlay shows how to reconnect when the keyboard is unplugged or cannot be reached, and picks
+  it up again by itself when it returns.
+- Mode changes leave music rhythm first, as AULA's driver does.
+- `research/tools/lighting_probe.py`, which measures what the keyboard stores for each lighting value.
+
 ## 0.1.0 (2026-09-16)
 
 ### Added

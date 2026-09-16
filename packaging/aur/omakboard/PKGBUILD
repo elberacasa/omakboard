@@ -1,7 +1,7 @@
 # Maintainer: elberacasa <https://github.com/elberacasa>
 
 pkgname=omakboard
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Tune Hall-effect keyboards on Omarchy: actuation, rapid trigger, SOCD, RGB'
 arch=('x86_64' 'aarch64')

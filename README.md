@@ -57,7 +57,8 @@ Omarchy theme.
   select a group (or use All, WASD, Letters, Numbers). Each key shows its actuation depth and a
   tag when rapid trigger is on. Set the depth with the slider, the − and + buttons or a preset,
   turn rapid trigger on, and set its sensitivity, separately for press and release if you like.
-- **Lighting**: pick an effect, brightness, speed and colour; the drawing previews the colour.
+- **Lighting**: pick an effect, brightness, speed and a colour or rainbow colours; the drawing previews
+  the colour. Custom shows the per-key colours saved on the keyboard.
 
 Changes save to the keyboard a moment after you make them, and each is read back from the
 keyboard; the footer says when. Undo, or ctrl+z, puts back what the last save replaced. The first
@@ -101,6 +102,7 @@ omakboard rapid-trigger on --sensitivity 0.30 W A S D
 omakboard rapid-trigger on --press 0.20 --release 0.40 W
 omakboard rapid-trigger off --all
 omakboard lighting --mode auto-ripple --brightness 3 --color 00a0ff
+omakboard lighting --mode breath --rainbow on
 
 omakboard backup                            # save everything to ~/.local/state/omakboard/backups/
 omakboard restore <backup.json>             # put a backup back
