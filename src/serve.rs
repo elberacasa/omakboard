@@ -260,7 +260,10 @@ impl<O: Opener> Server<O> {
                 .find(|(key, _)| key.index == k.index)
                 .map(|(_, t)| *t)
         });
-        let lighting_change = lighting.filter(|l| *l != device.info.lighting);
+        // Compared in the form the firmware stores, so asking for what it already keeps sends nothing.
+        let lighting_change = lighting
+            .map(|l| aula::stored_lighting(&l))
+            .filter(|l| *l != device.info.lighting);
 
         // Check everything before sending anything.
         for c in &changes {
@@ -284,7 +287,8 @@ impl<O: Opener> Server<O> {
                     model.name
                 ));
             }
-            aula::validate_lighting(l, &device.info.lighting_modes).map_err(|e| e.to_string())?;
+            aula::validate_lighting(l, &device.info.lighting_modes, device.info.lighting.mode)
+                .map_err(|e| e.to_string())?;
         }
         if changes.is_empty() && lighting_change.is_none() {
             return Ok(Vec::new());
@@ -322,9 +326,10 @@ impl<O: Opener> Server<O> {
             }
         }
         if let Some(l) = lighting_change {
-            apply::apply_lighting(&mut device.session, &device.info.lighting_modes, &l)
-                .map_err(|e| e.to_string())?;
-            device.info.lighting = l;
+            let from = device.info.lighting;
+            device.info.lighting =
+                apply::apply_lighting(&mut device.session, &device.info.lighting_modes, &from, &l)
+                    .map_err(|e| e.to_string())?;
             changed.push("lighting".to_owned());
         }
         Ok(changed)
@@ -394,7 +399,7 @@ impl<O: Opener> Server<O> {
                 "brightness_max": info.lighting_modes.max_brightness,
                 "speed_max": info.lighting_modes.max_speed,
             },
-            "modes": info.lighting_modes.modes.iter().map(|&id| json!({
+            "modes": info.lighting_modes.offered().iter().map(|&id| json!({
                 "id": id,
                 "name": aula::lighting_mode_name(id).map(str::to_owned).unwrap_or_else(|| format!("Mode {id}")),
             })).collect::<Vec<_>>(),
@@ -605,6 +610,48 @@ mod tests {
     }
 
     #[test]
+    fn every_offered_effect_applies_through_the_server() {
+        let mut o = opener();
+        let mut s = server(&mut o);
+        let state = call(&mut s, r#"{"id": 1, "cmd": "state"}"#)["result"].clone();
+        let ids: Vec<u64> = state["modes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids.last(), Some(&10), "Custom is offered");
+        for (n, id) in ids.iter().enumerate() {
+            // The overlay sends the lighting it has, with only the mode changed.
+            let mut lighting =
+                call(&mut s, r#"{"id": 2, "cmd": "state"}"#)["result"]["lighting"].clone();
+            lighting["mode"] = json!(id);
+            let r = call(
+                &mut s,
+                &json!({"id": 10 + n, "cmd": "apply", "lighting": lighting}).to_string(),
+            );
+            assert_eq!(r["ok"], true, "mode {id}: {r}");
+            assert_eq!(r["result"]["lighting"]["mode"], json!(id));
+        }
+        // Aurora keeps its own direction, and the state says so.
+        let mut lighting =
+            call(&mut s, r#"{"id": 3, "cmd": "state"}"#)["result"]["lighting"].clone();
+        lighting["mode"] = json!(7);
+        lighting["direction"] = json!(0);
+        let r = call(
+            &mut s,
+            &json!({"id": 4, "cmd": "apply", "lighting": lighting}).to_string(),
+        );
+        assert_eq!(r["result"]["lighting"]["direction"], 4);
+        // Asking again for Aurora with direction 0 is what the keyboard already keeps: nothing to send.
+        let again = call(
+            &mut s,
+            &json!({"id": 5, "cmd": "apply", "lighting": lighting}).to_string(),
+        );
+        assert_eq!(again["result"]["changed"], json!([]));
+    }
+
+    #[test]
     fn invalid_requests_send_nothing() {
         let mut o = opener();
         let sim = o.sim.clone();
@@ -620,7 +667,7 @@ mod tests {
         );
         let mut lighting =
             call(&mut s, r#"{"id": 3, "cmd": "state"}"#)["result"]["lighting"].clone();
-        lighting["mode"] = json!(10);
+        lighting["mode"] = json!(100);
         assert!(
             call(
                 &mut s,
@@ -628,7 +675,7 @@ mod tests {
             )["error"]
                 .as_str()
                 .unwrap()
-                .contains("advertises")
+                .contains("offers")
         );
         assert_eq!(sim.0.borrow().writes(), 0);
         let bad = call(&mut s, r#"{"id": 5, "cmd": "explode"}"#);

@@ -134,6 +134,10 @@ pub fn trigger_frames(
         .collect()
 }
 
+/// How long to keep reading back before calling a write a mismatch. Every WIN 60 HE write has
+/// read back on the first try; the retries cover a slower keyboard, not a known delay.
+const READ_BACK_DELAYS_MS: [u64; 3] = [0, 40, 150];
+
 /// Writes the changes, then reads every changed key back.
 pub fn apply_triggers<T: Transport>(
     session: &mut Session<T>,
@@ -145,42 +149,92 @@ pub fn apply_triggers<T: Transport>(
     for frame in &frames {
         session.write(frame, Some(aula::is_trigger_ack))?;
     }
-    let mut wrong = Vec::new();
-    for c in changes {
-        let reply = session.read_one(Read::Trigger {
-            row: c.key.row(),
-            column: c.key.column(),
-        })?;
-        if aula::parse_trigger(&reply)? != c.to {
-            wrong.push(c.key.label);
+    let mut pending: Vec<&KeyChange> = changes.iter().collect();
+    let mut wrong: Vec<(&KeyChange, Trigger)> = Vec::new();
+    for delay in READ_BACK_DELAYS_MS {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+        wrong.clear();
+        for c in &pending {
+            let reply = session.read_one(Read::Trigger {
+                row: c.key.row(),
+                column: c.key.column(),
+            })?;
+            let got = aula::parse_trigger(&reply)?;
+            if got != c.to {
+                wrong.push((c, got));
+            }
         }
+        if wrong.is_empty() {
+            return Ok(());
+        }
+        pending = wrong.iter().map(|(c, _)| *c).collect();
     }
-    if wrong.is_empty() {
-        Ok(())
-    } else {
-        Err(ApplyError::Mismatch(format!(
-            "the trigger of {}",
-            wrong.join(", ")
-        )))
-    }
+    let detail: Vec<String> = wrong
+        .iter()
+        .map(|(c, got)| {
+            format!(
+                "{} ({})",
+                c.key.label,
+                trigger_differences(&c.to, got).join(", ")
+            )
+        })
+        .collect();
+    Err(ApplyError::Mismatch(format!(
+        "the trigger of {}",
+        detail.join("; ")
+    )))
 }
 
-/// Writes lighting, then reads it back.
+fn trigger_differences(wanted: &Trigger, got: &Trigger) -> Vec<String> {
+    let mut out = Vec::new();
+    if wanted.mode != got.mode {
+        out.push(format!("mode {:?} -> {:?}", wanted.mode, got.mode));
+    }
+    for (name, a, b) in [
+        ("travel", wanted.travel, got.travel),
+        ("press", wanted.press, got.press),
+        ("release", wanted.release, got.release),
+    ] {
+        if a != b {
+            out.push(format!("{name} {a} -> {b}"));
+        }
+    }
+    out
+}
+
+/// Writes lighting and reads it back; returns what the keyboard has now. `from` is what it had.
+///
+/// The firmware keeps some values in its own form (see [`aula::stored_lighting`]), so that form
+/// is what is written and expected back. A mode change first leaves music rhythm, as AULA's
+/// web driver does.
 pub fn apply_lighting<T: Transport>(
     session: &mut Session<T>,
     modes: &LightingModes,
+    from: &Lighting,
     to: &Lighting,
-) -> Result<(), ApplyError> {
-    aula::validate_lighting(to, modes)?;
-    session.write(&aula::lighting_frame(to), None)?;
-    // Lighting writes get no reply; give the keyboard a moment before reading back.
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    let back = aula::parse_lighting(&session.read_one(Read::Lighting)?)?;
-    if back == *to {
-        Ok(())
-    } else {
-        Err(ApplyError::Mismatch("lighting".to_owned()))
+) -> Result<Lighting, ApplyError> {
+    let expected = aula::stored_lighting(to);
+    aula::validate_lighting(&expected, modes, from.mode)?;
+    if expected.mode != from.mode {
+        session.write(
+            &aula::leave_music_rhythm_frame(),
+            Some(aula::is_lighting_helper_ack),
+        )?;
     }
+    session.write(&aula::lighting_frame(&expected), None)?;
+    let mut back = *from;
+    for delay in READ_BACK_DELAYS_MS {
+        // Lighting writes get no reply; even the first read waits a moment.
+        std::thread::sleep(std::time::Duration::from_millis(delay.max(20)));
+        back = aula::parse_lighting(&session.read_one(Read::Lighting)?)?;
+        if back == expected {
+            return Ok(back);
+        }
+    }
+    Err(ApplyError::Mismatch(format!(
+        "lighting ({})",
+        aula::lighting_differences(&expected, &back).join(", ")
+    )))
 }
 
 /// Parses a length in millimetres ("1.2", "1.20mm", "0.05") into travel steps.
@@ -438,7 +492,7 @@ mod tests {
         let err = apply_triggers(&mut s, &changes, &range()).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "the trigger of W, Space did not read back as written"
+            "the trigger of W (travel 170 -> 171); Space (travel 170 -> 171) did not read back as written"
         );
     }
 
@@ -452,10 +506,102 @@ mod tests {
             brightness: 1,
             ..now
         };
-        apply_lighting(&mut s, &modes, &wanted).unwrap();
+        assert_eq!(
+            apply_lighting(&mut s, &modes, &now, &wanted).unwrap(),
+            wanted
+        );
         assert_eq!(
             aula::parse_lighting(&s.read_one(Read::Lighting).unwrap()).unwrap(),
             wanted
+        );
+    }
+
+    #[test]
+    fn effects_with_their_own_direction_read_back() {
+        // The bug this guards: Aurora keeps direction 4 when sent 0, which read back as a mismatch.
+        let modes = aula::parse_lighting_modes(&frame(MODES)).unwrap();
+        let mut s = Session::new(SimKeyboard::default());
+        let base = aula::parse_lighting(&s.read_one(Read::Lighting).unwrap()).unwrap();
+        for mode in [4, 7, 12, 15] {
+            let current = aula::parse_lighting(&s.read_one(Read::Lighting).unwrap()).unwrap();
+            let back = apply_lighting(
+                &mut s,
+                &modes,
+                &current,
+                &Lighting {
+                    mode,
+                    direction: 0,
+                    ..base
+                },
+            )
+            .unwrap();
+            assert_eq!(back.mode, mode);
+            assert_ne!(back.direction, 0, "mode {mode} keeps its own direction");
+        }
+        // Rainbow on Static is kept off, and expected off.
+        let current = aula::parse_lighting(&s.read_one(Read::Lighting).unwrap()).unwrap();
+        let back = apply_lighting(
+            &mut s,
+            &modes,
+            &current,
+            &Lighting {
+                mode: 0,
+                full_color: true,
+                ..base
+            },
+        )
+        .unwrap();
+        assert!(!back.full_color);
+    }
+
+    #[test]
+    fn a_mode_change_leaves_music_rhythm_first() {
+        let modes = aula::parse_lighting_modes(&frame(MODES)).unwrap();
+        let mut s = Session::new(SimKeyboard::default());
+        let sent_17 = |s: &Session<SimKeyboard>| {
+            s.trace
+                .iter()
+                .filter(|(d, p)| *d == crate::session::Direction::Out && p[0] == 0x17)
+                .count()
+        };
+        let now = aula::parse_lighting(&s.read_one(Read::Lighting).unwrap()).unwrap();
+        let dim = apply_lighting(
+            &mut s,
+            &modes,
+            &now,
+            &Lighting {
+                brightness: 1,
+                ..now
+            },
+        )
+        .unwrap();
+        assert_eq!(sent_17(&s), 0, "no mode change, no 17");
+        apply_lighting(&mut s, &modes, &dim, &Lighting { mode: 8, ..dim }).unwrap();
+        assert_eq!(sent_17(&s), 1);
+    }
+
+    #[test]
+    fn mismatches_name_what_differs() {
+        let modes = aula::parse_lighting_modes(&frame(MODES)).unwrap();
+        let mut s = Session::new(SimKeyboard {
+            lie_about_lighting: true,
+            ..SimKeyboard::default()
+        });
+        let now = aula::parse_lighting(&s.read_one(Read::Lighting).unwrap()).unwrap();
+        let err = apply_lighting(
+            &mut s,
+            &modes,
+            &now,
+            &Lighting {
+                brightness: 4,
+                speed: 1,
+                ..now
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "lighting (brightness 4 -> 3) did not read back as written"
         );
     }
 

@@ -298,7 +298,7 @@ pub fn parse_lighting(reply: &[u8]) -> Result<Lighting, DecodeError> {
         speed: b[2],
         foreground: rgb(3),
         background: rgb(6),
-        direction: if b[9] >= 6 { 0 } else { b[9] },
+        direction: b[9],
         full_color: b[10] != 0,
         power: b[11],
     })
@@ -412,6 +412,12 @@ pub fn parse_poll_rate(reply: &[u8]) -> Result<u32, DecodeError> {
     }
 }
 
+/// Custom: per-key colours saved on the keyboard. The web driver offers it beside the modes the
+/// keyboard advertises, and the WIN 60 HE stores it like any other mode.
+pub const CUSTOM_MODE: u8 = 10;
+/// Music rhythm follows audio streamed from the host, so Omakboard never switches into it.
+pub const MUSIC_RHYTHM_MODE: u8 = 100;
+
 /// The lighting modes a keyboard advertises, and its brightness and speed limits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LightingModes {
@@ -447,12 +453,23 @@ pub enum WriteError {
     UnknownMode(u8),
     #[error("no keys selected")]
     NoKeys,
-    #[error("lighting mode {0} is not one this keyboard advertises")]
+    #[error("lighting mode {0} is not one this keyboard offers")]
     LightingMode(u8),
     #[error("brightness {value} is above this keyboard's {max}")]
     Brightness { value: u8, max: u8 },
     #[error("speed {value} is above this keyboard's {max}")]
     Speed { value: u8, max: u8 },
+}
+
+impl LightingModes {
+    /// Modes Omakboard offers: the advertised ones, then Custom.
+    pub fn offered(&self) -> Vec<u8> {
+        let mut modes = self.modes.clone();
+        if !modes.contains(&CUSTOM_MODE) {
+            modes.push(CUSTOM_MODE);
+        }
+        modes
+    }
 }
 
 impl TriggerMode {
@@ -518,8 +535,15 @@ pub fn is_trigger_ack(reply: &[u8]) -> bool {
     reply.len() > 5 && reply[0] == 0x21 && reply[4] == 0x01 && reply[5] == 0x00
 }
 
-pub fn validate_lighting(l: &Lighting, modes: &LightingModes) -> Result<(), WriteError> {
-    if !modes.modes.contains(&l.mode) {
+/// Checks lighting before it is framed. `current` is the mode the keyboard has now: a keyboard
+/// already in a mode Omakboard does not offer (music rhythm, set elsewhere) can still have its
+/// brightness or colour changed without leaving it.
+pub fn validate_lighting(
+    l: &Lighting,
+    modes: &LightingModes,
+    current: u8,
+) -> Result<(), WriteError> {
+    if !modes.offered().contains(&l.mode) && l.mode != current {
         return Err(WriteError::LightingMode(l.mode));
     }
     if l.brightness > modes.max_brightness {
@@ -535,6 +559,81 @@ pub fn validate_lighting(l: &Lighting, modes: &LightingModes) -> Result<(), Writ
         });
     }
     Ok(())
+}
+
+/// The lighting the firmware keeps when it is sent `l`. Measured on the WIN 60 HE, firmware
+/// 3.13.06, with research/tools/lighting_probe.py:
+///
+/// - Directions come in pairs. Radar and Striation keep only 6 or 7, Aurora 4 or 5, Speed Respond
+///   2 or 3: whatever is sent, they keep the pair's first value plus the sent value's low bit.
+///   Every other mode keeps 0-7 and wraps 8 to 0.
+/// - Static has no rainbow: it keeps full colour off.
+///
+/// Omakboard writes this form, so what it reads back is what it wrote.
+pub fn stored_lighting(l: &Lighting) -> Lighting {
+    let low_bit = l.direction & 1;
+    let direction = match l.mode {
+        4 | 15 => 6 + low_bit,
+        7 => 4 + low_bit,
+        12 => 2 + low_bit,
+        _ => l.direction % 8,
+    };
+    Lighting {
+        direction,
+        full_color: l.full_color && l.mode != 0,
+        ..*l
+    }
+}
+
+/// Fields that differ between two lightings, for error messages: `["direction 0 -> 4"]`.
+pub fn lighting_differences(wanted: &Lighting, got: &Lighting) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut field = |name: &str, a: String, b: String| {
+        if a != b {
+            out.push(format!("{name} {a} -> {b}"));
+        }
+    };
+    field("mode", wanted.mode.to_string(), got.mode.to_string());
+    field(
+        "brightness",
+        wanted.brightness.to_string(),
+        got.brightness.to_string(),
+    );
+    field("speed", wanted.speed.to_string(), got.speed.to_string());
+    field(
+        "colour",
+        wanted.foreground.to_string(),
+        got.foreground.to_string(),
+    );
+    field(
+        "background",
+        wanted.background.to_string(),
+        got.background.to_string(),
+    );
+    field(
+        "direction",
+        wanted.direction.to_string(),
+        got.direction.to_string(),
+    );
+    field(
+        "full colour",
+        wanted.full_color.to_string(),
+        got.full_color.to_string(),
+    );
+    field("power", wanted.power.to_string(), got.power.to_string());
+    out
+}
+
+/// Sent before every mode change, as AULA's web driver does: it leaves music rhythm (captured
+/// `17 00 00 00 02 00 00`); the keyboard answers `17` and keeps its lighting.
+pub fn leave_music_rhythm_frame() -> [u8; PAYLOAD_LEN] {
+    let mut p = [0u8; PAYLOAD_LEN];
+    p[..5].copy_from_slice(&[0x17, 0, 0, 0, 0x02]);
+    p
+}
+
+pub fn is_lighting_helper_ack(reply: &[u8]) -> bool {
+    reply.first() == Some(&0x17)
 }
 
 pub fn lighting_frame(l: &Lighting) -> [u8; PAYLOAD_LEN] {
@@ -879,6 +978,83 @@ pub(crate) mod tests {
         assert_eq!((m.max_speed, m.max_brightness), (4, 4));
         // Every mode the WIN 60 HE advertises has a name.
         assert!(m.modes.iter().all(|&id| lighting_mode_name(id).is_some()));
+        assert_eq!(m.offered().last(), Some(&CUSTOM_MODE));
+        assert_eq!(m.offered().len(), 15);
+    }
+
+    #[test]
+    fn stored_lighting_follows_the_firmware() {
+        let base = parse_lighting(&frame(LIGHTING)).unwrap();
+        let stored = |mode: u8, direction: u8| {
+            stored_lighting(&Lighting {
+                mode,
+                direction,
+                ..base
+            })
+            .direction
+        };
+        // Measured: direction 0-8 sent to each mode (research/tools/lighting_probe.py).
+        for (mode, kept) in [
+            (4, [6, 7, 6, 7, 6, 7, 6, 7, 6]),
+            (15, [6, 7, 6, 7, 6, 7, 6, 7, 6]),
+            (7, [4, 5, 4, 5, 4, 5, 4, 5, 4]),
+            (12, [2, 3, 2, 3, 2, 3, 2, 3, 2]),
+            (2, [0, 1, 2, 3, 4, 5, 6, 7, 0]),
+            (0, [0, 1, 2, 3, 4, 5, 6, 7, 0]),
+            (10, [0, 1, 2, 3, 4, 5, 6, 7, 0]),
+        ] {
+            let got: Vec<u8> = (0..9).map(|d| stored(mode, d)).collect();
+            assert_eq!(got, kept, "mode {mode}");
+        }
+        let rainbow = Lighting {
+            full_color: true,
+            ..base
+        };
+        assert!(!stored_lighting(&Lighting { mode: 0, ..rainbow }).full_color);
+        assert!(stored_lighting(&Lighting { mode: 1, ..rainbow }).full_color);
+        // The rest passes through.
+        let aurora = Lighting {
+            mode: 7,
+            brightness: 2,
+            speed: 1,
+            ..base
+        };
+        assert_eq!(
+            stored_lighting(&aurora),
+            Lighting {
+                direction: 4,
+                ..aurora
+            }
+        );
+    }
+
+    #[test]
+    fn lighting_differences_name_fields() {
+        let a = parse_lighting(&frame(LIGHTING)).unwrap();
+        let b = Lighting {
+            direction: 4,
+            brightness: 1,
+            ..a
+        };
+        assert_eq!(
+            lighting_differences(&a, &b),
+            ["brightness 4 -> 1", "direction 0 -> 4"]
+        );
+        assert!(lighting_differences(&a, &a).is_empty());
+    }
+
+    #[test]
+    fn raw_directions_are_kept() {
+        // Radar's 6 used to be folded to 0, hiding what the keyboard stored.
+        let radar = parse_lighting(&frame("07 00 00 00 0c 04 04 03 ff 00 00 00 00 00 06")).unwrap();
+        assert_eq!((radar.mode, radar.direction), (4, 6));
+    }
+
+    #[test]
+    fn leave_music_rhythm_matches_the_capture() {
+        assert_eq!(hex(&leave_music_rhythm_frame()), "17 00 00 00 02");
+        assert!(is_lighting_helper_ack(&frame("17")));
+        assert_eq!(refused(&leave_music_rhythm_frame()), None);
     }
 
     #[test]
@@ -917,12 +1093,44 @@ pub(crate) mod tests {
     fn lighting_limits() {
         let modes = parse_lighting_modes(&frame(MODES)).unwrap();
         let l = parse_lighting(&frame(LIGHTING)).unwrap();
-        assert_eq!(validate_lighting(&l, &modes), Ok(()));
+        assert_eq!(validate_lighting(&l, &modes, 0), Ok(()));
+        // Custom is offered beside the advertised modes.
         assert_eq!(
-            validate_lighting(&Lighting { mode: 10, ..l }, &modes),
-            Err(WriteError::LightingMode(10))
+            validate_lighting(
+                &Lighting {
+                    mode: CUSTOM_MODE,
+                    ..l
+                },
+                &modes,
+                0
+            ),
+            Ok(())
         );
-        assert!(validate_lighting(&Lighting { brightness: 5, ..l }, &modes).is_err());
-        assert!(validate_lighting(&Lighting { speed: 5, ..l }, &modes).is_err());
+        // Music rhythm cannot be switched into, but a keyboard already in it can be dimmed.
+        let music = Lighting {
+            mode: MUSIC_RHYTHM_MODE,
+            ..l
+        };
+        assert_eq!(
+            validate_lighting(&music, &modes, 0),
+            Err(WriteError::LightingMode(100))
+        );
+        assert_eq!(
+            validate_lighting(
+                &Lighting {
+                    brightness: 1,
+                    ..music
+                },
+                &modes,
+                MUSIC_RHYTHM_MODE
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_lighting(&Lighting { mode: 5, ..l }, &modes, 0),
+            Err(WriteError::LightingMode(5))
+        );
+        assert!(validate_lighting(&Lighting { brightness: 5, ..l }, &modes, 0).is_err());
+        assert!(validate_lighting(&Lighting { speed: 5, ..l }, &modes, 0).is_err());
     }
 }

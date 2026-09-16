@@ -84,23 +84,44 @@ Write: `07 00 00 00 0e` + 14 payload bytes. No reply.
 | 2 | speed | 0-4 |
 | 3-5 | foreground R, G, B | captured |
 | 6-8 | background R, G, B | |
-| 9 | direction | driver treats >= 6 as 0 |
-| 10 | full colour (rainbow) | |
+| 9 | direction | pairs of opposites; some modes keep only one pair (below) |
+| 10 | full colour (rainbow) | Static keeps it off |
 | 11 | power | |
 
 Each mode keeps its own colour: switching Static -> Breath -> Static restored Static's earlier
 colour (captured). Only the active mode's settings can be read. The driver sends a write on
 every keystroke in the colour fields.
 
-**Verified by Omakboard**: brightness 4 -> 2, colour `#ff0000` -> `#00a0ff`, Static -> Breath,
-and back, each read back as written. The keyboard does not acknowledge lighting writes.
+**Verified by Omakboard**: every offered mode, brightness 0-4, speed 0-4, colours, and full colour
+on and off, each written and read back. The keyboard does not acknowledge lighting writes, and every
+read-back matched on the first read.
+
+**What the firmware stores** (measured with `research/tools/lighting_probe.py`, sending direction 0-8
+and full colour 0-1 to every mode): some values come back in the firmware's own form, so a writer
+must expect that form or its read-back will not match.
+
+| Mode | Direction kept when sent 0, 1, 2 … 8 | Full colour |
+|---|---|---|
+| Radar (4), Striation (15) | 6, 7, 6, 7, 6, 7, 6, 7, 6 | as sent |
+| Aurora (7) | 4, 5, 4, 5, 4, 5, 4, 5, 4 | as sent |
+| Speed Respond (12) | 2, 3, 2, 3, 2, 3, 2, 3, 2 | as sent |
+| Static (0) | 0-7, 8 wraps to 0 | always off |
+| every other mode, Custom (10) included | 0-7, 8 wraps to 0 | as sent |
+
+AULA's driver reads a stored direction of 6 or more as 0; Omakboard keeps the raw value.
+
+**Custom (10)** is not in the `0a` list, but the driver offers it and the keyboard stores it like any
+other mode. **Music rhythm (100)** follows audio streamed from the host; Omakboard does not switch
+into it.
 
 `08` is the same layout for side lighting; the WIN 60 HE has none.
 
 ### `17`  lighting helper  (captured)
 
-`17 00 00 00 02 xx yy` is sent before a mode change; the keyboard replies `17`. The driver
-uses it to enter (`01 01`) and leave (`00 00`) music-rhythm mode.
+`17 00 00 00 02 xx yy` is sent before a mode change; the keyboard replies `17` and keeps its
+lighting. The driver uses it to enter (`01 01`) and leave (`00 00`) music-rhythm mode. Omakboard
+sends the leave form before every mode change, as the driver does (verified: acknowledged, no
+lighting change).
 
 ### `09`  per-key custom colours  (driver)
 

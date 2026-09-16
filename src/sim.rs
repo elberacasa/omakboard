@@ -23,6 +23,8 @@ pub struct SimKeyboard {
     pub identity: String,
     /// Read triggers back one step deeper than written.
     pub lie: bool,
+    /// Read lighting back one brightness step dimmer than written.
+    pub lie_about_lighting: bool,
     /// Every payload received.
     pub received: Vec<Vec<u8>>,
     pub pending: VecDeque<Vec<u8>>,
@@ -41,6 +43,7 @@ impl Default for SimKeyboard {
             lighting,
             identity: IDENTITY_0.to_owned(),
             lie: false,
+            lie_about_lighting: false,
             received: Vec::new(),
             pending: VecDeque::new(),
         }
@@ -95,9 +98,27 @@ impl Transport for SimKeyboard {
             (0x07, 0x01, ..) => {
                 let mut r = frame("07 00 00 00 0c");
                 r[5..17].copy_from_slice(&self.lighting);
+                if self.lie_about_lighting {
+                    r[6] = r[6].saturating_sub(1);
+                }
                 self.reply(r);
             }
-            (0x07, 0x00, 0x0E, _) => self.lighting.copy_from_slice(&p[5..17]),
+            (0x07, 0x00, 0x0E, _) => {
+                self.lighting.copy_from_slice(&p[5..17]);
+                // The firmware's own forms, as measured on the keyboard; kept apart from the code
+                // under test so a wrong rule there fails here.
+                let (mode, direction) = (self.lighting[0], self.lighting[9]);
+                self.lighting[9] = match mode {
+                    4 | 15 => 6 + (direction & 1),
+                    7 => 4 + (direction & 1),
+                    12 => 2 + (direction & 1),
+                    _ => direction % 8,
+                };
+                if mode == 0 {
+                    self.lighting[10] = 0;
+                }
+            }
+            (0x17, ..) => self.reply(frame("17")),
             (0x21, _, 0x18, 0x04) => self.reply(frame(RANGE)),
             (0x21, _, 0x01, 0x09) => self.reply(frame(POLL_RATE)),
             (0x21, _, 0x18, 0x05) => {

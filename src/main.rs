@@ -90,6 +90,9 @@ enum Command {
         /// Colour as RRGGBB.
         #[arg(long)]
         color: Option<String>,
+        /// Cycle through every colour instead of one (not on Static).
+        #[arg(long)]
+        rainbow: Option<OnOff>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -119,6 +122,12 @@ enum OnOff {
 }
 
 fn main() -> ExitCode {
+    // A closed pipe (`omakboard triggers | head`) ends the process quietly instead of panicking.
+    // Nothing is printed between a write and its read-back, so this never cuts a change short.
+    // SAFETY: resetting a signal to its default disposition before any threads start.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
     let found = match discover::discover(&Sysfs::default()) {
         Ok(found) => found,
@@ -192,6 +201,7 @@ fn main() -> ExitCode {
             brightness,
             speed,
             color,
+            rainbow,
             dry_run,
         } => change(&found, dry_run, |r| {
             let from = r.info.lighting;
@@ -213,6 +223,11 @@ fn main() -> ExitCode {
             if let Some(color) = color {
                 to.foreground = parse_rgb(&color)?;
             }
+            if let Some(rainbow) = rainbow {
+                to.full_color = matches!(rainbow, OnOff::On);
+            }
+            // The form the firmware keeps, so the plan shows what the keyboard will have.
+            let to = aula::stored_lighting(&to);
             Ok(Plan {
                 triggers: Vec::new(),
                 lighting: (to != from).then_some((from, to)),
@@ -466,9 +481,14 @@ fn describe_lighting(l: &Lighting) -> String {
         .mode_name()
         .map(str::to_owned)
         .unwrap_or_else(|| format!("mode {}", l.mode));
+    let colour = if l.full_color {
+        "rainbow".to_owned()
+    } else {
+        format!("colour {}", l.foreground)
+    };
     format!(
-        "{mode}, brightness {}, speed {}, colour {}",
-        l.brightness, l.speed, l.foreground
+        "{mode}, brightness {}, speed {}, {colour}",
+        l.brightness, l.speed
     )
 }
 
@@ -555,7 +575,7 @@ fn restore_plan(r: &Reading, file: &Path) -> Result<Plan, String> {
             .map(|s| s.trigger)
     });
     let from = r.info.lighting;
-    let to = saved.info.lighting;
+    let to = aula::stored_lighting(&saved.info.lighting);
     Ok(Plan {
         triggers,
         lighting: (from != to).then_some((from, to)),
@@ -607,7 +627,8 @@ fn change(
                 model.name
             ));
         }
-        aula::validate_lighting(to, &r.info.lighting_modes).map_err(|e| e.to_string())?;
+        aula::validate_lighting(to, &r.info.lighting_modes, r.info.lighting.mode)
+            .map_err(|e| e.to_string())?;
     }
 
     for c in &plan.triggers {
@@ -638,7 +659,11 @@ fn change(
     }
 
     if dry_run {
-        let lighting = plan.lighting.iter().map(|(_, to)| aula::lighting_frame(to));
+        // A mode change first leaves music rhythm, as apply_lighting does.
+        let lighting = plan.lighting.iter().flat_map(|(from, to)| {
+            let leave = (from.mode != to.mode).then(aula::leave_music_rhythm_frame);
+            leave.into_iter().chain([aula::lighting_frame(to)])
+        });
         println!("\nDry run: these frames would be sent, and nothing was.");
         for f in frames.iter().copied().chain(lighting) {
             println!(
@@ -659,7 +684,8 @@ fn change(
             .map_err(|e| format!("{e}\n{undo}"))?;
     }
     if let Some((_, to)) = &plan.lighting {
-        apply::apply_lighting(&mut r.session, &r.info.lighting_modes, to)
+        let from = r.info.lighting;
+        apply::apply_lighting(&mut r.session, &r.info.lighting_modes, &from, to)
             .map_err(|e| format!("{e}\n{undo}"))?;
     }
     let what = match (plan.triggers.len(), plan.lighting.is_some()) {
