@@ -24,9 +24,10 @@ mkdir -p "$D" && cp -r manifest.json install.sh plugin "$D"/
 omarchy-shell shell rescanPlugins
 ```
 
-Copy the files rather than symlinking them; Omarchy's plugin validator rejects symlinks. After
-adding a new QML file, restart the shell once (`omarchy restart shell`): Qt caches each plugin
-folder's file list.
+Copy the files rather than symlinking them; Omarchy's plugin validator rejects symlinks. QML
+reloads when saved, but `Model.js` and new files do not: restart the shell (`omarchy restart shell`)
+after changing `Model.js` or adding a file, because Qt caches `.pragma library` scripts and each
+plugin folder's file list.
 
 ## Layout
 

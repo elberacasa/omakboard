@@ -40,9 +40,9 @@ the keyboard's settings.
 Other Arch systems can install the AUR package `omakboard` once it is published, or build
 with `cargo install --path .` and install `packaging/udev/70-omakboard.rules` by hand.
 
-If the overlay does not open after `omarchy plugin update` adds new files to the plugin, run
-`omarchy restart shell` once: the shell keeps a list of each plugin folder's files from when it
-first loaded them.
+After `omarchy plugin update`, run `omarchy restart shell` once. The shell keeps a plugin's
+scripts and its folder's file list from when it first loaded them, so without a restart the
+overlay can keep running the previous version, or fail to open when the update added files.
 
 ## The overlay
 
