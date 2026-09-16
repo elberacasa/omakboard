@@ -1,0 +1,17 @@
+# Apply the udev rule to a keyboard that is already plugged in. pacman's own udev hook
+# reloads rules only after the transaction, so reload here before triggering.
+apply_udev_rule() {
+  udevadm control --reload-rules >/dev/null 2>&1 || true
+  udevadm trigger --subsystem-match=hidraw --action=change >/dev/null 2>&1 || true
+}
+
+post_install() {
+  apply_udev_rule
+  echo '==> Run `omakboard doctor` as your user to check the keyboard is reachable.'
+  echo '    On Omarchy, add the bar widget with:'
+  echo '    omarchy plugin add https://github.com/elberacasa/omakboard --enable'
+}
+
+post_upgrade() {
+  apply_udev_rule
+}

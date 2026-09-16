@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Manifest
+        # The checks `omarchy plugin validate` makes that matter here; the command itself
+        # needs an Omarchy install.
+        run: |
+          jq -e '.schemaVersion == 1 and (.id | startswith("omarchy.") | not)' manifest.json
+          jq -e '(.kinds | index("bar-widget")) != null and .entryPoints.barWidget and .entryPoints.overlay' manifest.json
+          test -f "$(jq -r .entryPoints.barWidget manifest.json)" && test -f "$(jq -r .entryPoints.overlay manifest.json)"
+          test -z "$(find . -name .git -prune -o -type l -print -quit)"
+
+      - name: Versions agree
+        run: |
+          test "$(jq -r .version manifest.json)" = "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+
+      - name: No agent instructions in the published checkout
+        # `omarchy plugin add` clones the whole repository onto users' machines.
+        run: test ! -e AGENTS.md && test ! -e CLAUDE.md
+
+      - name: Logo matches its sprite script
+        run: python3 scripts/pixel-mark.py | diff - docs/images/omakboard.svg
+
+      - name: Model tests
+        # A glob, not the directory: Node before 23 runs a directory argument as a file.
+        run: node --test "plugin/tests/**/*.test.js"
+
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Shellcheck
+        run: shellcheck install.sh

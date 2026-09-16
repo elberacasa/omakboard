@@ -1,0 +1,46 @@
+# Maintainer: elberacasa <https://github.com/elberacasa>
+
+pkgname=omakboard
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Tune Hall-effect keyboards on Omarchy: actuation, rapid trigger, SOCD, RGB'
+arch=('x86_64' 'aarch64')
+url='https://github.com/elberacasa/omakboard'
+license=('MIT OR Apache-2.0')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo')
+optdepends=(
+  'omarchy: shell plugin and bar widget'
+  'keyd: remapping and layers, which Omakboard leaves to it'
+)
+install=omakboard.install
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# Replaced with the tag tarball's checksum (updpkgsums) when v$pkgver is published.
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/omakboard "$pkgdir/usr/bin/omakboard"
+  install -Dm644 packaging/udev/70-omakboard.rules "$pkgdir/usr/lib/udev/rules.d/70-omakboard.rules"
+  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/$pkgname"
+}

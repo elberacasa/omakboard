@@ -1,0 +1,6 @@
+# Build output
+/target/
+
+# Raw WebHID and usbmon captures stay local until reviewed; commit only redacted traces
+/research/captures/
+__pycache__/

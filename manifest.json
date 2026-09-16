@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.elberacasa.omakboard",
+  "name": "Omakboard",
+  "version": "0.1.0",
+  "author": "elberacasa",
+  "license": "MIT OR Apache-2.0",
+  "description": "Tune your Hall-effect keyboard: actuation, rapid trigger and lighting, key by key.",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "overlay": "plugin/Omakboard.qml",
+    "barWidget": "plugin/Indicator.qml"
+  },
+  "barWidget": {
+    "displayName": "Omakboard",
+    "description": "Your Hall-effect keyboard; click to tune it",
+    "category": "Devices",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

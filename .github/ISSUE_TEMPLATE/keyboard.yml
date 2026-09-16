@@ -1,0 +1,40 @@
+name: Keyboard report
+description: Ask for a keyboard to be supported, or report how an untested one went
+labels: ["keyboard"]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Keyboard
+      description: Brand, model and variant, as printed on the box.
+      placeholder: AULA WIN 60 HE (standard)
+    validations:
+      required: true
+  - type: input
+    id: usb-id
+    attributes:
+      label: USB id
+      description: From `omakboard devices --json`, or `cat /sys/bus/usb/devices/*/idVendor` and `idProduct`.
+      placeholder: 2e3c:c365
+    validations:
+      required: true
+  - type: textarea
+    id: devices
+    attributes:
+      label: omakboard devices --json
+      render: json
+  - type: textarea
+    id: info
+    attributes:
+      label: omakboard info
+      description: Omakboard reads only the identity when it does not know the keyboard.
+      render: text
+  - type: input
+    id: vendor-software
+    attributes:
+      label: Vendor software
+      description: The app or web driver the vendor ships, with a link.
+  - type: textarea
+    id: notes
+    attributes:
+      label: What happened

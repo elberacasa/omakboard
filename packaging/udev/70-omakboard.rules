@@ -1,0 +1,15 @@
+# Omakboard: give the user logged in at the seat access to supported Hall-effect keyboards.
+#
+# Only the vendor configuration interface is matched; the keyboard's typing interfaces
+# keep their defaults, so a bug here can never stop you typing. `uaccess` lets
+# systemd-logind grant access to the active session's user, so no group or root is needed.
+#
+# ATTRS keys must all match one parent device, so the USB interface is matched through
+# ID_USB_INTERFACE_NUM, a property of the hidraw node set by 60-persistent-hidraw.rules.
+#
+# Install:  sudo install -Dm644 70-omakboard.rules /usr/lib/udev/rules.d/70-omakboard.rules
+#           sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=hidraw
+# Remove:   sudo rm /usr/lib/udev/rules.d/70-omakboard.rules && sudo udevadm control --reload-rules
+
+# AULA WIN 60 HE (2e3c:c365): vendor HID page 0xFF1B on USB interface 2. Verified.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2e3c", ATTRS{idProduct}=="c365", ENV{ID_USB_INTERFACE_NUM}=="02", TAG+="uaccess"
